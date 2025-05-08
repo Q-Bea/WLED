@@ -1,7 +1,4 @@
 {
   "name": "LightPoke",
-  "build": { "libArchive": false},
-  "dependencies": {
-    "links2004/WebSockets": "^2.6.1"
-  }
+  "build": { "libArchive": false}
 }
