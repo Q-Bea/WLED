@@ -2,6 +2,11 @@
 
 #include "wled.h"
 
+// How many failed connection attempts to make before resetting the connection
+#define LIGHT_POKE_RESET_CONNECTION_TIMEOUT 10
+// How long to wait between incrementing failed connection attempt counter
+#define LIGHT_POKE_RESET_CONNECTION_MS 1000
+
 bool serverIsHTTPS(String server) {
   // All servers will be https:// or http:// because of validation rules
   return server.startsWith("https://");
@@ -79,6 +84,8 @@ class LightPokeAdditions : public Usermod {
   StaticJsonDocument<1024> pokeDataDoc;
 
   bool sendPokeFlag = false;
+  int notConnectedCounter = 0;
+  unsigned long lastNotConnectedTime = 0;
 
  public:
   /**
@@ -134,6 +141,7 @@ class LightPokeAdditions : public Usermod {
     }
 
     if (client.connected() && client.available()) {
+      notConnectedCounter = 0;
       String line = client.readStringUntil('\n');
       if (line.startsWith("data:")) {
         String data = line.substring(5);
@@ -143,6 +151,18 @@ class LightPokeAdditions : public Usermod {
 
         deserializeJson(pokeDataDoc, data);
         handlePoke();
+      }
+    } else {
+      // Reset the connection if not connected
+      if (millis() - lastNotConnectedTime > LIGHT_POKE_RESET_CONNECTION_MS) {
+        notConnectedCounter++;
+        lastNotConnectedTime = millis();
+      }
+
+      if (notConnectedCounter > LIGHT_POKE_RESET_CONNECTION_TIMEOUT) {
+        notConnectedCounter = 0;
+        lastNotConnectedTime = 0;
+        setupSSE();
       }
     }
   }
@@ -159,8 +179,8 @@ class LightPokeAdditions : public Usermod {
     if (usermod.isNull())
       usermod = root.createNestedObject(FPSTR(_name));
 
-    usermod["server"] = server;
-    usermod["apiKey"] = apiKey;
+    usermod[FPSTR(_server)] = server;
+    usermod[FPSTR(_apiKey)] = apiKey;
   }
 
   void readFromJsonState(JsonObject& root) override {
