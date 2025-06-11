@@ -19,7 +19,7 @@
 // -D WLED_BRAND="\"Custom Brand\""
 // -D WLED_PRODUCT_NAME="\"Custom Product\""
 #ifndef WLED_BRAND
-  #define WLED_BRAND "WLED"
+  #define WLED_BRAND "WLED-LIGHTPOKE"
 #endif
 #ifndef WLED_PRODUCT_NAME
   #define WLED_PRODUCT_NAME "FOSS"
