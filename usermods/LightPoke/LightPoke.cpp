@@ -7,42 +7,34 @@
 // How long to wait between incrementing failed connection attempt counter
 #define LIGHT_POKE_RESET_CONNECTION_MS 1000
 
-bool serverIsHTTPS(String server)
-{
+bool serverIsHTTPS(String server) {
   // All servers will be https:// or http:// because of validation rules
   return server.startsWith("https://");
 }
 
-bool isValidServerURL(String server)
-{
+bool isValidServerURL(String server) {
   // Only allow server if on preapproved list otherwise set default
   return server.equals("https://lightpoke.bumblebea.me") || server.equals("http://lightpoke.bumblebea.me") || server.startsWith("http://192.168.") || server.startsWith("http://10.");
 }
 
-struct ServerURLParts
-{
+struct ServerURLParts {
   bool isHTTPS;
   String origin;
   uint16_t port;
 };
 
-ServerURLParts serverURLParts(String server)
-{
+ServerURLParts serverURLParts(String server) {
   bool isHTTPS = serverIsHTTPS(server);
   String newS;
-  if (isHTTPS)
-  {
+  if (isHTTPS) {
     newS = server.substring(8); // remove https://
-  }
-  else
-  {
+  } else {
     newS = server.substring(7); // remove http://
   }
 
   int trailingSlash = newS.indexOf('/');
   // Remove everything after the first slash
-  if (trailingSlash != -1)
-  {
+  if (trailingSlash != -1) {
     newS = newS.substring(0, trailingSlash);
   }
 
@@ -50,13 +42,10 @@ ServerURLParts serverURLParts(String server)
   String origin;
   String port;
 
-  if (colon != -1)
-  {
+  if (colon != -1) {
     origin = newS.substring(0, colon);
     port = newS.substring(colon + 1);
-  }
-  else
-  {
+  } else {
     origin = newS;
     port = isHTTPS ? "443" : "80";
   }
@@ -67,8 +56,7 @@ ServerURLParts serverURLParts(String server)
   return parts;
 }
 
-class LightPokeAdditions : public Usermod
-{
+class LightPokeAdditions : public Usermod {
 private:
   bool enabled = true;
   bool initDone = false;
@@ -96,6 +84,7 @@ private:
   StaticJsonDocument<1024> pokeDataDoc;
 
   bool sendPokeFlag = false;
+  bool saveSettingsFlag = false;
   int notConnectedCounter = 0;
   unsigned long lastNotConnectedTime = 0;
 
@@ -110,8 +99,7 @@ public:
    */
   inline bool isEnabled() { return enabled; }
 
-  void setup() override
-  {
+  void setup() override {
     // do your set-up here
     // Serial.println("Hello from my usermod!");
     initDone = true;
@@ -121,29 +109,25 @@ public:
    * connected() is called every time the WiFi is (re)connected
    * Use it to initialize network interfaces
    */
-  void connected() override
-  {
+  void connected() override {
     // Serial.println("Connected to WiFi!");
     setupSSE();
     return;
   }
 
-  void loop() override
-  {
+  void loop() override {
     // if usermod is disabled or called during strip updating just exit
     // NOTE: on very long strips strip.isUpdating() may always return true so update accordingly
     if (!enabled || strip.isUpdating() || apiKey.length() == 0 || server.length() == 0)
       return;
 
-    if (sendPokeFlag)
-    {
+    if (sendPokeFlag) {
       sendPokeFlag = false;
       sendPoke();
     }
 
     // Handle applying and restoring from poke
-    if (applyPokeFlag)
-    {
+    if (applyPokeFlag) {
       applyPokeFlag = false;
       pokeSustainMs = pokeDataDoc["sustainS"].as<uint16>() * 1000;
       deserializeState(pokeDataDoc["state"], CALL_MODE_NOTIFICATION, 0);
@@ -151,19 +135,16 @@ public:
       lastPokeTime = millis();
     }
 
-    if (lastPokeTime > 0 && millis() - lastPokeTime > pokeSustainMs)
-    {
+    if (lastPokeTime > 0 && millis() - lastPokeTime > pokeSustainMs) {
       applyPreset(lightPokePresetId, CALL_MODE_NOTIFICATION);
       lastPokeTime = 0;
       pokeSustainMs = 0;
     }
 
-    if (client.connected() && client.available())
-    {
+    if (client.connected() && client.available()) {
       notConnectedCounter = 0;
       String line = client.readStringUntil('\n');
-      if (line.startsWith("data:"))
-      {
+      if (line.startsWith("data:")) {
         String data = line.substring(5);
         // Process the data received from the server
         // For example, you can print it to the Serial Monitor
@@ -172,27 +153,28 @@ public:
         deserializeJson(pokeDataDoc, data);
         handlePoke();
       }
-    }
-    else
-    {
+    } else {
       // Reset the connection if not connected
-      if (millis() - lastNotConnectedTime > LIGHT_POKE_RESET_CONNECTION_MS)
-      {
+      if (millis() - lastNotConnectedTime > LIGHT_POKE_RESET_CONNECTION_MS) {
         notConnectedCounter++;
         lastNotConnectedTime = millis();
       }
 
-      if (notConnectedCounter > LIGHT_POKE_RESET_CONNECTION_TIMEOUT)
-      {
+      if (notConnectedCounter > LIGHT_POKE_RESET_CONNECTION_TIMEOUT) {
         notConnectedCounter = 0;
         lastNotConnectedTime = 0;
         setupSSE();
       }
     }
+
+    if (saveSettingsFlag) {
+      saveSettingsFlag = false;
+      DEBUG_PRINTF("Updating WLED config");
+      serializeConfigToFS();
+    }
   }
 
-  void addToJsonInfo(JsonObject &root) override
-  {
+  void addToJsonInfo(JsonObject &root) override {
     if (!enabled)
       return;
 
@@ -207,8 +189,7 @@ public:
    * addToJsonState() can be used to add custom entries to the /json/state part of the JSON API (state object).
    * Values in the state object may be modified by connected clients
    */
-  void addToJsonState(JsonObject &root) override
-  {
+  void addToJsonState(JsonObject &root) override {
     if (!initDone || !enabled)
       return; // prevent crash on boot applyPreset()
 
@@ -220,35 +201,40 @@ public:
     usermod[FPSTR(_apiKey)] = apiKey;
   }
 
-  void readFromJsonState(JsonObject &root) override
-  {
+  void readFromJsonState(JsonObject &root) override {
     if (!initDone)
       return; // prevent crash on boot applyPreset()
 
     JsonObject usermod = root[FPSTR(_name)];
-    if (!usermod.isNull())
-    {
+    if (!usermod.isNull()) {
       String checkServer;
       getJsonValue(usermod[FPSTR(_server)], checkServer, server);
+      bool newServerDifferent = checkServer.equals(server) == false;
 
-      if (isValidServerURL(checkServer))
-      {
+      String checkApiKey;
+      getJsonValue(usermod[FPSTR(_apiKey)], checkApiKey, apiKey);
+      bool newApiKeyDifferent = checkApiKey.equals(apiKey) == false;
+
+      if (isValidServerURL(checkServer)) {
         server = checkServer;
-      }
-      else
-      {
+      } else {
+        newServerDifferent = false; // if server is not valid, don't change it
         server = _defaultServerUrl;
       }
 
-      getJsonValue(usermod[FPSTR(_apiKey)], apiKey, apiKey);
+      apiKey = checkApiKey;
+
+      // Update the config
+      if (newServerDifferent || newApiKeyDifferent) {
+        saveSettingsFlag = true;
+      }
 
       // Trigger poke action
       sendPokeFlag = usermod["poke"].as<bool>();
     }
   }
 
-  bool readFromConfig(JsonObject &root) override
-  {
+  bool readFromConfig(JsonObject &root) override {
     JsonObject top = root[FPSTR(_name)];
 
     bool configComplete = !top.isNull();
@@ -259,20 +245,16 @@ public:
     configComplete &= getJsonValue(top[FPSTR(_server)], checkServer, server);
 
     // Only allow server if on preapproved list otherwise set default
-    if (isValidServerURL(checkServer))
-    {
+    if (isValidServerURL(checkServer)) {
       server = checkServer;
-    }
-    else
-    {
+    } else {
       server = _defaultServerUrl;
     }
 
     return configComplete;
   }
 
-  void addToConfig(JsonObject &root) override
-  {
+  void addToConfig(JsonObject &root) override {
     JsonObject top = root.createNestedObject(FPSTR(_name));
     top[FPSTR(_enabled)] = enabled;
     top[FPSTR(_apiKey)] = apiKey;
@@ -280,21 +262,18 @@ public:
   }
 };
 
-void LightPokeAdditions::setupSSE()
-{
+void LightPokeAdditions::setupSSE() {
   if (!enabled)
     return;
 
-  if (client.connected())
-  {
+  if (client.connected()) {
     client.stop();
   }
 
   DEBUG_PRINTF("Connecting to %s with API Key %s\n", server.c_str(), apiKey.c_str());
 
   ServerURLParts parts = serverURLParts(server);
-  if (client.connect(parts.origin.c_str(), parts.port))
-  {
+  if (client.connect(parts.origin.c_str(), parts.port)) {
     DEBUG_PRINTLN("Connected to server");
 
     // Construct the HTTP GET request with the correct path
@@ -306,23 +285,19 @@ void LightPokeAdditions::setupSSE()
     client.println(F("Accept: text/event-stream")); // Specify SSE content type
     client.println(F("Connection: keep-alive"));    // Keep the connection open
     client.println();                               // End the HTTP headers
-  }
-  else
-  {
+  } else {
     DEBUG_PRINTLN("Failed to connect to server");
   }
 }
 
-void LightPokeAdditions::sendPoke()
-{
+void LightPokeAdditions::sendPoke() {
   if (!enabled)
     return;
 
   client.stop();
 
   ServerURLParts parts = serverURLParts(server);
-  if (client.connect(parts.origin.c_str(), parts.port))
-  {
+  if (client.connect(parts.origin.c_str(), parts.port)) {
     client.print(F("POST /api/device/"));
     client.print(apiKey); // Insert the API key dynamically
     client.println(F("/poke HTTP/1.1"));
@@ -333,17 +308,14 @@ void LightPokeAdditions::sendPoke()
     client.println();
 
     client.stop();
-  }
-  else
-  {
+  } else {
     DEBUG_PRINTLN("Failed to connect to server for poke");
   }
 
   setupSSE();
 }
 
-void LightPokeAdditions::handlePoke()
-{
+void LightPokeAdditions::handlePoke() {
   if (!enabled)
     return;
 
@@ -354,8 +326,7 @@ void LightPokeAdditions::handlePoke()
 
   // Save the current lantern state to a preset and restore after poke effect
   // Only save current state if not already in a temporary state
-  if (lastPokeTime == 0)
-  {
+  if (lastPokeTime == 0) {
     cacheInvalidate++;
     savePreset(lightPokePresetId, _presetName);
   }
